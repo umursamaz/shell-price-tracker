@@ -147,7 +147,7 @@ class YakitFiyatTakip:
         <body style="font-family: Arial, sans-serif;">
             <div style="background-color: #DD1D21; color: white; padding: 20px; border-radius: 5px;">
                 <h1 style="margin: 0;">🔔 Shell Motorin Fiyat Raporu</h1>
-                <p style="margin: 10px 0 0 0;">İstanbul / Tuzla - {bugun}</p>
+                <p style="margin: 10px 0 0 0;">İstanbul / Tuzla - {tr_time.strftime('%d.%m.%Y %H:%M:%S')}</p>
                 <p style="margin: 5px 0 0 0; font-size: 12px; opacity: 0.9;">🤖 GitHub Actions tarafından otomatik oluşturuldu</p>
             </div>
             
@@ -238,7 +238,7 @@ class YakitFiyatTakip:
             msg = MIMEMultipart('alternative')
             # UTC'den Türkiye saatine çevir (UTC+3)
             tr_time = datetime.now() + timedelta(hours=3)
-            msg['Subject'] = f"🔔 Shell Motorin Fiyatı - {tr_time.strftime('%d.%m.%Y')}"
+            msg['Subject'] = f"🔔 Shell Motorin Fiyatı - {tr_time.strftime('%d.%m.%Y %H:%M:%S')}"
             msg['From'] = email_gonderen
             msg['To'] = email_alici
             
