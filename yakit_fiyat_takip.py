@@ -71,28 +71,29 @@ class YakitFiyatTakip:
             print("→ Sayfa yükleniyor...")
             self.driver.get('https://www.shell.com.tr/suruculer/shell-yakitlari/akaryakit-pompa-satis-fiyatlari.html')
             
-            wait = WebDriverWait(self.driver, 20)
+            wait = WebDriverWait(self.driver, 30)
             
             print("→ İstanbul seçiliyor...")
             il_dropdown = wait.until(EC.element_to_be_clickable((By.ID, "cb_all_cb_province_I")))
             il_dropdown.click()
-            time.sleep(1)
+            time.sleep(2)
             
             istanbul = wait.until(EC.element_to_be_clickable((By.XPATH, "//td[contains(text(), 'ISTANBUL')]")))
             istanbul.click()
-            time.sleep(2)
+            time.sleep(3)
             
             print("→ Tuzla seçiliyor...")
             ilce_dropdown = wait.until(EC.visibility_of_element_located((By.ID, "cb_all_cb_county_I")))
             ilce_dropdown.click()
-            time.sleep(1)
+            time.sleep(2)
             
             tuzla = wait.until(EC.element_to_be_clickable((By.XPATH, "//td[contains(text(), 'TUZLA')]")))
             tuzla.click()
-            time.sleep(2)
+            time.sleep(3)
             
             print("→ Fiyat okunuyor...")
             wait.until(EC.presence_of_element_located((By.ID, "cb_all_grdPrices")))
+            time.sleep(2)
             
             tuzla_row = self.driver.find_element(By.XPATH, "//td[contains(text(), 'TUZLA')]/parent::tr")
             motorin_cell = tuzla_row.find_elements(By.TAG_NAME, "td")[2]
@@ -104,6 +105,11 @@ class YakitFiyatTakip:
             
         except Exception as e:
             print(f"✗ Fiyat çekme hatası: {e}")
+            try:
+                self.driver.save_screenshot('hata_screenshot.png')
+                print("→ Screenshot kaydedildi")
+            except:
+                pass
             return None
         finally:
             self.close_driver()
