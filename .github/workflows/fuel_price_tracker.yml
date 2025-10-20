@@ -1,0 +1,35 @@
+name: Shell Motorin Fiyat Takip
+
+on:
+  schedule:
+    - cron: '0 21 * * *'  # Her gün saat 21:00 UTC (00:00 TR)
+  workflow_dispatch:  # Manuel tetikleme için
+
+jobs:
+  track-fuel-price:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v2
+    
+    - name: Python Kurulumu
+      uses: actions/setup-python@v2
+      with:
+        python-version: '3.x'
+    
+    - name: Gerekli Paketleri Yükle
+      run: |
+        python -m pip install --upgrade pip
+        pip install selenium webdriver-manager python-dotenv
+    
+    - name: Chrome Kurulumu
+      uses: browser-actions/setup-chrome@latest
+    
+    - name: Fiyat Takibi Çalıştır
+      env:
+        EMAIL_SENDER: ${{ secrets.EMAIL_SENDER }}
+        SMTP_KEY: ${{ secrets.SMTP_KEY }}
+        EMAIL_RECEIVER: ${{ secrets.EMAIL_RECEIVER }}
+        SMTP_SERVER: ${{ secrets.SMTP_SERVER }}
+        SMTP_PORT: ${{ secrets.SMTP_PORT }}
+      run: python shell_motorin_github.py
