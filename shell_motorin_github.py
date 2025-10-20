@@ -11,7 +11,7 @@ from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.chrome.options import Options
 import json
 import os
-from datetime import datetime
+from datetime import datetime, timedelta
 import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
@@ -129,7 +129,9 @@ class YakitFiyatTakip:
     
     def rapor_olustur(self, guncel_fiyat):
         """HTML rapor oluştur"""
-        bugun = datetime.now().strftime('%d.%m.%Y')
+        # UTC'den Türkiye saatine çevir (UTC+3)
+        tr_time = datetime.now() + timedelta(hours=3)
+        bugun = tr_time.strftime('%d.%m.%Y')
         toplam_gun = len(self.veriler)
         
         haftalik = self.istatistik_hesapla(min(7, toplam_gun))
@@ -234,7 +236,9 @@ class YakitFiyatTakip:
                 raise ValueError("Email bilgileri eksik")
             
             msg = MIMEMultipart('alternative')
-            msg['Subject'] = f"🔔 Shell Motorin Fiyatı - {datetime.now().strftime('%d.%m.%Y')}"
+            # UTC'den Türkiye saatine çevir (UTC+3)
+            tr_time = datetime.now() + timedelta(hours=3)
+            msg['Subject'] = f"🔔 Shell Motorin Fiyatı - {tr_time.strftime('%d.%m.%Y')}"
             msg['From'] = email_gonderen
             msg['To'] = email_alici
             
@@ -268,7 +272,9 @@ class YakitFiyatTakip:
         try:
             fiyat = self.fiyat_cek()
             
-            bugun = datetime.now().date().isoformat()
+            # UTC'den Türkiye saatine çevir (UTC+3)
+            tr_time = datetime.now() + timedelta(hours=3)
+            bugun = tr_time.date().isoformat()
             self.veriler[bugun] = fiyat
             self.verileri_kaydet()
             
