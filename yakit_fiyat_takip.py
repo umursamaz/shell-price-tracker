@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Shell Yakıt Fiyat Takip Scripti - GitHub Actions Versiyonu
+Shell Yakıt Fiyat Takip - GitHub Actions Edition
 """
 
 from selenium import webdriver
@@ -8,7 +8,6 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.chrome.options import Options
-from selenium.webdriver.chrome.service import Service
 import time
 import json
 import os
@@ -18,7 +17,6 @@ from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 import statistics
 
-# GitHub Actions'da çalışacak şekilde ayarlanmış
 class YakitFiyatTakip:
     def __init__(self):
         self.veri_dosyasi = 'fiyat_verileri.json'
@@ -26,35 +24,45 @@ class YakitFiyatTakip:
         self.driver = None
     
     def verileri_yukle(self):
+        """JSON dosyasından verileri yükle"""
         if os.path.exists(self.veri_dosyasi):
             try:
                 with open(self.veri_dosyasi, 'r', encoding='utf-8') as f:
                     return json.load(f)
-            except:
+            except Exception as e:
+                print(f"Veri yükleme hatası: {e}")
                 return {}
         return {}
     
     def verileri_kaydet(self):
-        with open(self.veri_dosyasi, 'w', encoding='utf-8') as f:
-            json.dump(self.veriler, f, ensure_ascii=False, indent=2)
-        print("✓ Veriler kaydedildi")
+        """Verileri JSON dosyasına kaydet"""
+        try:
+            with open(self.veri_dosyasi, 'w', encoding='utf-8') as f:
+                json.dump(self.veriler, f, ensure_ascii=False, indent=2)
+            print("✓ Veriler kaydedildi")
+        except Exception as e:
+            print(f"✗ Veri kaydetme hatası: {e}")
     
     def setup_driver(self):
+        """Selenium WebDriver'ı başlat"""
         chrome_options = Options()
         chrome_options.add_argument('--headless')
         chrome_options.add_argument('--no-sandbox')
         chrome_options.add_argument('--disable-dev-shm-usage')
         chrome_options.add_argument('--disable-gpu')
         chrome_options.add_argument('--window-size=1920,1080')
+        chrome_options.add_argument('user-agent=Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36')
         
         self.driver = webdriver.Chrome(options=chrome_options)
         print("✓ WebDriver başlatıldı")
     
     def close_driver(self):
+        """WebDriver'ı kapat"""
         if self.driver:
             self.driver.quit()
     
     def fiyat_cek(self):
+        """Shell sitesinden fiyat çek"""
         try:
             self.setup_driver()
             
@@ -81,6 +89,7 @@ class YakitFiyatTakip:
             tuzla.click()
             time.sleep(2)
             
+            print("→ Fiyat okunuyor...")
             wait.until(EC.presence_of_element_located((By.ID, "cb_all_grdPrices")))
             
             tuzla_row = self.driver.find_element(By.XPATH, "//td[contains(text(), 'TUZLA')]/parent::tr")
@@ -88,16 +97,17 @@ class YakitFiyatTakip:
             motorin_str = motorin_cell.text.strip()
             motorin_fiyat = float(motorin_str.replace(',', '.'))
             
-            print(f"✓ Fiyat çekildi: {motorin_fiyat} ₺")
+            print(f"✓ Fiyat başarıyla çekildi: {motorin_fiyat} ₺")
             return motorin_fiyat
             
         except Exception as e:
-            print(f"✗ Hata: {e}")
+            print(f"✗ Fiyat çekme hatası: {e}")
             return None
         finally:
             self.close_driver()
     
     def istatistik_hesapla(self, gun_sayisi):
+        """İstatistik hesapla"""
         tarihler = sorted(self.veriler.keys(), reverse=True)
         ilgili_fiyatlar = [self.veriler[t] for i, t in enumerate(tarihler) if i < gun_sayisi]
         
@@ -112,6 +122,7 @@ class YakitFiyatTakip:
         }
     
     def rapor_olustur(self, guncel_fiyat):
+        """HTML rapor oluştur"""
         bugun = datetime.now().strftime('%d.%m.%Y')
         toplam_gun = len(self.veriler)
         
@@ -121,36 +132,74 @@ class YakitFiyatTakip:
         html = f"""
         <html>
         <body style="font-family: Arial, sans-serif;">
-            <div style="background-color: #DD1D21; color: white; padding: 20px;">
-                <h1>🔔 Shell Motorin Fiyat Raporu</h1>
-                <p>İstanbul / Tuzla - {bugun}</p>
-                <p style="font-size:12px;">🤖 GitHub Actions tarafından otomatik gönderildi</p>
+            <div style="background-color: #DD1D21; color: white; padding: 20px; border-radius: 5px;">
+                <h1 style="margin: 0;">🔔 Shell Motorin Fiyat Raporu</h1>
+                <p style="margin: 10px 0 0 0;">İstanbul / Tuzla - {bugun}</p>
+                <p style="margin: 5px 0 0 0; font-size: 12px; opacity: 0.9;">🤖 GitHub Actions tarafından otomatik oluşturuldu</p>
             </div>
+            
             <div style="padding: 20px;">
-                <h2>Güncel Fiyat</h2>
-                <div style="font-size: 36px; font-weight: bold; color: #DD1D21;">
-                    {guncel_fiyat:.2f} ₺/Litre
+                <h2 style="color: #333;">Güncel Fiyat</h2>
+                <div style="font-size: 48px; font-weight: bold; color: #DD1D21; margin: 20px 0;">
+                    {guncel_fiyat:.2f} ₺/Lt
                 </div>
                 
-                <h2>Son {haftalik['gun_sayisi']} Günlük Özet</h2>
-                <div style="background-color: #f5f5f5; padding: 15px; margin: 10px 0;">
-                    <p><b>Ortalama:</b> {haftalik['ortalama']:.2f} ₺</p>
-                    <p><b>En Yüksek:</b> {haftalik['en_yuksek']:.2f} ₺</p>
-                    <p><b>En Düşük:</b> {haftalik['en_dusuk']:.2f} ₺</p>
-                    <p style="color: #666;">Fark: {guncel_fiyat - haftalik['ortalama']:+.2f} ₺</p>
+                <h2 style="color: #333; margin-top: 40px;">📊 Son {haftalik['gun_sayisi']} Günlük Özet</h2>
+                <div style="background: linear-gradient(to right, #f5f5f5, #e8e8e8); padding: 20px; border-radius: 8px; margin: 15px 0;">
+                    <table style="width: 100%; border-collapse: collapse;">
+                        <tr>
+                            <td style="padding: 8px; font-weight: bold;">Ortalama:</td>
+                            <td style="padding: 8px; text-align: right;">{haftalik['ortalama']:.2f} ₺</td>
+                        </tr>
+                        <tr>
+                            <td style="padding: 8px; font-weight: bold;">En Yüksek:</td>
+                            <td style="padding: 8px; text-align: right; color: #d32f2f;">{haftalik['en_yuksek']:.2f} ₺</td>
+                        </tr>
+                        <tr>
+                            <td style="padding: 8px; font-weight: bold;">En Düşük:</td>
+                            <td style="padding: 8px; text-align: right; color: #388e3c;">{haftalik['en_dusuk']:.2f} ₺</td>
+                        </tr>
+                    </table>
+                    <p style="margin: 15px 0 0 0; padding-top: 15px; border-top: 1px solid #ddd; color: #666; font-size: 14px;">
+                        {'📈' if guncel_fiyat > haftalik['ortalama'] else '📉'} 
+                        Bugünkü fiyat haftalık ortalamaya göre 
+                        <strong style="color: {'#d32f2f' if guncel_fiyat > haftalik['ortalama'] else '#388e3c'};">
+                            {guncel_fiyat - haftalik['ortalama']:+.2f} ₺
+                        </strong>
+                    </p>
                 </div>
                 
-                <h2>Son {aylik['gun_sayisi']} Günlük Özet</h2>
-                <div style="background-color: #f5f5f5; padding: 15px; margin: 10px 0;">
-                    <p><b>Ortalama:</b> {aylik['ortalama']:.2f} ₺</p>
-                    <p><b>En Yüksek:</b> {aylik['en_yuksek']:.2f} ₺</p>
-                    <p><b>En Düşük:</b> {aylik['en_dusuk']:.2f} ₺</p>
-                    <p style="color: #666;">Fark: {guncel_fiyat - aylik['ortalama']:+.2f} ₺</p>
+                <h2 style="color: #333; margin-top: 40px;">📊 Son {aylik['gun_sayisi']} Günlük Özet</h2>
+                <div style="background: linear-gradient(to right, #f5f5f5, #e8e8e8); padding: 20px; border-radius: 8px; margin: 15px 0;">
+                    <table style="width: 100%; border-collapse: collapse;">
+                        <tr>
+                            <td style="padding: 8px; font-weight: bold;">Ortalama:</td>
+                            <td style="padding: 8px; text-align: right;">{aylik['ortalama']:.2f} ₺</td>
+                        </tr>
+                        <tr>
+                            <td style="padding: 8px; font-weight: bold;">En Yüksek:</td>
+                            <td style="padding: 8px; text-align: right; color: #d32f2f;">{aylik['en_yuksek']:.2f} ₺</td>
+                        </tr>
+                        <tr>
+                            <td style="padding: 8px; font-weight: bold;">En Düşük:</td>
+                            <td style="padding: 8px; text-align: right; color: #388e3c;">{aylik['en_dusuk']:.2f} ₺</td>
+                        </tr>
+                    </table>
+                    <p style="margin: 15px 0 0 0; padding-top: 15px; border-top: 1px solid #ddd; color: #666; font-size: 14px;">
+                        {'📈' if guncel_fiyat > aylik['ortalama'] else '📉'} 
+                        Bugünkü fiyat aylık ortalamaya göre 
+                        <strong style="color: {'#d32f2f' if guncel_fiyat > aylik['ortalama'] else '#388e3c'};">
+                            {guncel_fiyat - aylik['ortalama']:+.2f} ₺
+                        </strong>
+                    </p>
                 </div>
                 
-                <p style="margin-top: 30px; color: #666; font-size: 12px;">
-                    Toplam {toplam_gun} gündür takip ediliyor.
-                </p>
+                <div style="margin-top: 40px; padding: 15px; background-color: #f9f9f9; border-left: 4px solid #DD1D21; border-radius: 4px;">
+                    <p style="margin: 0; color: #666; font-size: 13px;">
+                        📅 <strong>{toplam_gun}</strong> gündür takip ediliyor<br>
+                        🤖 Otomatik rapor - Her gün 00:00'da güncellenir
+                    </p>
+                </div>
             </div>
         </body>
         </html>
@@ -158,17 +207,21 @@ class YakitFiyatTakip:
         return html
     
     def email_gonder(self, icerik):
-        email_gonderen = os.environ.get('EMAIL_SENDER', 'osmankara@sabanciuniv.edu')
+        """Email gönder"""
+        email_gonderen = os.environ.get('EMAIL_SENDER')
         email_sifre = os.environ.get('SMTP_KEY')
-        email_alici = os.environ.get('EMAIL_RECEIVER', 'osmankara@sabanciuniv.edu')
+        email_alici = os.environ.get('EMAIL_RECEIVER')
         
-        if not email_sifre:
-            print("✗ SMTP_KEY environment variable bulunamadı!")
+        if not all([email_gonderen, email_sifre, email_alici]):
+            print("✗ Email bilgileri eksik!")
+            print(f"  Sender: {'✓' if email_gonderen else '✗'}")
+            print(f"  Password: {'✓' if email_sifre else '✗'}")
+            print(f"  Receiver: {'✓' if email_alici else '✗'}")
             return False
         
         try:
             msg = MIMEMultipart('alternative')
-            msg['Subject'] = f"Shell Motorin - {datetime.now().strftime('%d.%m.%Y')}"
+            msg['Subject'] = f"🔔 Shell Motorin Fiyatı - {datetime.now().strftime('%d.%m.%Y')}"
             msg['From'] = email_gonderen
             msg['To'] = email_alici
             
@@ -180,32 +233,40 @@ class YakitFiyatTakip:
             server.send_message(msg)
             server.quit()
             
-            print("✓ Email gönderildi")
+            print(f"✓ Email gönderildi → {email_alici}")
             return True
         except Exception as e:
-            print(f"✗ Email hatası: {e}")
+            print(f"✗ Email gönderme hatası: {e}")
             return False
     
     def calistir(self):
-        print("\n" + "="*50)
-        print("SHELL YAKIT FİYAT TAKİP - GitHub Actions")
-        print("="*50 + "\n")
+        """Ana çalışma fonksiyonu"""
+        print("\n" + "="*60)
+        print("  🚗 SHELL YAKIT FİYAT TAKİP - GitHub Actions")
+        print("="*60 + "\n")
         
         fiyat = self.fiyat_cek()
         
         if fiyat is None:
-            print("✗ Fiyat çekilemedi!")
-            return
+            print("\n✗ İşlem başarısız! Fiyat çekilemedi.\n")
+            return False
         
         bugun = datetime.now().date().isoformat()
         self.veriler[bugun] = fiyat
         self.verileri_kaydet()
         
         rapor = self.rapor_olustur(fiyat)
-        self.email_gonder(rapor)
+        email_basarili = self.email_gonder(rapor)
         
-        print(f"\n✓ Tamamlandı! Fiyat: {fiyat:.2f} ₺\n")
+        print("\n" + "="*60)
+        print(f"  ✅ İşlem tamamlandı!")
+        print(f"  💰 Fiyat: {fiyat:.2f} ₺")
+        print(f"  📧 Email: {'Gönderildi' if email_basarili else 'Gönderilemedi'}")
+        print("="*60 + "\n")
+        
+        return True
 
 if __name__ == "__main__":
     takip = YakitFiyatTakip()
-    takip.calistir()
+    success = takip.calistir()
+    exit(0 if success else 1)
