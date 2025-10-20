@@ -27,9 +27,10 @@ jobs:
     
     - name: Fiyat Takibi Çalıştır
       env:
-        EMAIL_SENDER: ${{ secrets.EMAIL_SENDER }}
-        SMTP_KEY: ${{ secrets.SMTP_KEY }}
-        EMAIL_RECEIVER: ${{ secrets.EMAIL_RECEIVER }}
-        SMTP_SERVER: ${{ secrets.SMTP_SERVER }}
-        SMTP_PORT: ${{ secrets.SMTP_PORT }}
+        EMAIL_SENDER: ${{ secrets.EMAIL_SENDER_GMAIL }}
+        SMTP_KEY: ${{ secrets.SMTP_KEY_GMAIL }}
+        EMAIL_RECEIVER: ${{ secrets.EMAIL_RECEIVER_GMAIL }}
+        SMTP_SERVER: ${{ secrets.SMTP_SERVER_GMAIL }}
+        SMTP_PORT: ${{ secrets.SMTP_PORT_GMAIL }}
+
       run: python shell_motorin_github.py
