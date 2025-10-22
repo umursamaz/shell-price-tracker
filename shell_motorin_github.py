@@ -3,16 +3,19 @@
 Shell Motorin Fiyat Takip (GitHub Actions Version)
 """
 
+from dotenv import load_dotenv
+load_dotenv()  # .env dosyasını yükle
+
 import sys
 from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.chrome.options import Options
-import json
 import os
 from datetime import datetime, timedelta
 import smtplib
+import pandas as pd
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 import statistics
@@ -21,31 +24,39 @@ class YakitFiyatTakip:
     def __init__(self):
         # GitHub workspace path
         self.workspace = os.getenv('GITHUB_WORKSPACE', os.getcwd())
-        self.veri_dosyasi = os.path.join(self.workspace, 'fiyat_verileri.json')
+        self.VERI_DOSYASI = os.path.join(self.workspace, 'motorin_fiyatlari.csv')
         self.screenshot_path = os.path.join(self.workspace, 'hata_screenshot.png')
-        self.veriler = self.verileri_yukle()
         self.driver = None
         self.wait_timeout = 30
     
     def verileri_yukle(self):
-        """JSON dosyasından verileri yükle"""
-        if os.path.exists(self.veri_dosyasi):
+        """CSV dosyasından verileri DataFrame olarak yükle"""
+        if os.path.exists(self.VERI_DOSYASI):
             try:
-                with open(self.veri_dosyasi, 'r', encoding='utf-8') as f:
-                    return json.load(f)
+                df = pd.read_csv(self.VERI_DOSYASI)
+                return df
             except Exception as e:
                 print(f"Veri yükleme hatası: {e}")
-                return {}
-        return {}
+                return pd.DataFrame(columns=['tarih', 'fiyat'])
+        return pd.DataFrame(columns=['tarih', 'fiyat'])
     
-    def verileri_kaydet(self):
-        """Verileri JSON dosyasına kaydet"""
+    def veri_ekle(self, tarih, fiyat):
+        """Yeni veriyi CSV dosyasına ekle"""
         try:
-            with open(self.veri_dosyasi, 'w', encoding='utf-8') as f:
-                json.dump(self.veriler, f, ensure_ascii=False, indent=2)
+            df = self.verileri_yukle()
+            yeni_veri = pd.DataFrame({'tarih': [tarih], 'fiyat': [fiyat]})
+            
+            # Eğer aynı tarih varsa güncelle, yoksa yeni satır ekle
+            df = pd.concat([df, yeni_veri]).drop_duplicates(subset='tarih', keep='last')
+            df = df.sort_values('tarih', ascending=True)
+            
+            # CSV'ye kaydet
+            df.to_csv(self.VERI_DOSYASI, index=False)
             print("✓ Veriler kaydedildi")
+            return df
         except Exception as e:
             print(f"✗ Veri kaydetme hatası: {e}")
+            raise
     
     def setup_driver(self):
         """Selenium WebDriver'ı başlat (GitHub Actions için özelleştirilmiş)"""
@@ -112,34 +123,44 @@ class YakitFiyatTakip:
         finally:
             self.close_driver()
 
-    def istatistik_hesapla(self, gun_sayisi):
-        """İstatistik hesapla"""
-        tarihler = sorted(self.veriler.keys(), reverse=True)
-        ilgili_fiyatlar = [self.veriler[t] for i, t in enumerate(tarihler) if i < gun_sayisi]
-        
-        if not ilgili_fiyatlar:
+    def istatistik_hesapla(self, gun_sayisi, tum_veriler):
+        """Son N günün istatistiklerini hesapla"""
+        if len(tum_veriler) == 0:
             return None
+            
+        # Son N günün verilerini al
+        son_veriler = tum_veriler.tail(gun_sayisi)
+        fiyatlar = son_veriler['fiyat'].tolist()
         
+        if len(fiyatlar) == 0:
+            return None
+            
         return {
-            'ortalama': round(statistics.mean(ilgili_fiyatlar), 2),
-            'en_yuksek': round(max(ilgili_fiyatlar), 2),
-            'en_dusuk': round(min(ilgili_fiyatlar), 2),
-            'gun_sayisi': len(ilgili_fiyatlar)
+            'ortalama': round(statistics.mean(fiyatlar), 2),
+            'en_yuksek': round(max(fiyatlar), 2),
+            'en_dusuk': round(min(fiyatlar), 2),
+            'gun_sayisi': len(fiyatlar),
+            'baslangic_tarih': son_veriler.iloc[0]['tarih'],
+            'bitis_tarih': son_veriler.iloc[-1]['tarih']
         }
     
-    def rapor_olustur(self, guncel_fiyat):
+    def rapor_olustur(self, guncel_fiyat, haftalik, aylik, toplam_gun):
         """HTML rapor oluştur"""
         # UTC'den Türkiye saatine çevir (UTC+3)
         tr_time = datetime.now() + timedelta(hours=3)
-        bugun = tr_time.strftime('%d.%m.%Y')
-        toplam_gun = len(self.veriler)
+        bugun = tr_time.strftime('%d.%m.%Y %H:%M:%S')
         
-        haftalik = self.istatistik_hesapla(min(7, toplam_gun))
-        aylik = self.istatistik_hesapla(min(30, toplam_gun))
-        
-        if not haftalik or not aylik:
-            haftalik = {'ortalama': guncel_fiyat, 'en_yuksek': guncel_fiyat, 
-                       'en_dusuk': guncel_fiyat, 'gun_sayisi': 1}
+        # İlk çalıştırma için varsayılan değerler
+        if haftalik is None:
+            haftalik = {
+                'ortalama': guncel_fiyat,
+                'en_yuksek': guncel_fiyat,
+                'en_dusuk': guncel_fiyat,
+                'gun_sayisi': 1,
+                'baslangic_tarih': bugun,
+                'bitis_tarih': bugun
+            }
+        if aylik is None:
             aylik = haftalik.copy()
         
         html = f"""
@@ -148,7 +169,6 @@ class YakitFiyatTakip:
             <div style="background-color: #DD1D21; color: white; padding: 20px; border-radius: 5px;">
                 <h1 style="margin: 0;">🔔 Shell Motorin Fiyat Raporu</h1>
                 <p style="margin: 10px 0 0 0;">İstanbul / Tuzla - {tr_time.strftime('%d.%m.%Y %H:%M:%S')}</p>
-                <p style="margin: 5px 0 0 0; font-size: 12px; opacity: 0.9;">🤖 GitHub Actions tarafından otomatik oluşturuldu</p>
             </div>
             
             <div style="padding: 20px;">
@@ -158,6 +178,9 @@ class YakitFiyatTakip:
                 </div>
                 
                 <h2 style="color: #333; margin-top: 40px;">📊 Son {haftalik['gun_sayisi']} Günlük Özet</h2>
+                <p style="color: #666; margin-top: -15px; font-size: 14px;">
+                    {haftalik['baslangic_tarih']} - {haftalik['bitis_tarih']}
+                </p>
                 <div style="background: linear-gradient(to right, #f5f5f5, #e8e8e8); padding: 20px; border-radius: 8px; margin: 15px 0;">
                     <table style="width: 100%; border-collapse: collapse;">
                         <tr>
@@ -183,6 +206,9 @@ class YakitFiyatTakip:
                 </div>
                 
                 <h2 style="color: #333; margin-top: 40px;">📊 Son {aylik['gun_sayisi']} Günlük Özet</h2>
+                <p style="color: #666; margin-top: -15px; font-size: 14px;">
+                    {aylik['baslangic_tarih']} - {aylik['bitis_tarih']}
+                </p>
                 <div style="background: linear-gradient(to right, #f5f5f5, #e8e8e8); padding: 20px; border-radius: 8px; margin: 15px 0;">
                     <table style="width: 100%; border-collapse: collapse;">
                         <tr>
@@ -210,7 +236,7 @@ class YakitFiyatTakip:
                 <div style="margin-top: 40px; padding: 15px; background-color: #f9f9f9; border-left: 4px solid #DD1D21; border-radius: 4px;">
                     <p style="margin: 0; color: #666; font-size: 13px;">
                         📅 <strong>{toplam_gun}</strong> gündür takip ediliyor<br>
-                        🤖 GitHub Actions - Her gün 00:00'da güncellenir
+                        🤖 GitHub Actions - Her gün 00:00'da güncellenir.
                     </p>
                 </div>
             </div>
@@ -265,25 +291,36 @@ class YakitFiyatTakip:
     
     def calistir(self):
         """Ana çalışma fonksiyonu"""
-        print("\n" + "="*60)
-        print("  🚗 SHELL YAKIT FİYAT TAKİP - GitHub Actions")
-        print("="*60 + "\n")
+        print("\n" + "="*34)
+        print("  🚗 SHELL YAKIT FİYAT TAKİP 🚗")
+        print("="*34 + "\n")
         
         try:
+            # Fiyat çek
             fiyat = self.fiyat_cek()
             
-            # UTC'den Türkiye saatine çevir (UTC+3)
+            # Türkiye saatine göre tarih
             tr_time = datetime.now() + timedelta(hours=3)
-            bugun = tr_time.date().isoformat()
-            self.veriler[bugun] = fiyat
-            self.verileri_kaydet()
+            bugun = tr_time.strftime('%Y-%m-%d')
             
-            rapor = self.rapor_olustur(fiyat)
+            # Veriyi kaydet ve tüm verileri al
+            df = self.veri_ekle(bugun, fiyat)
+            
+            # Toplam gün sayısı
+            toplam_gun = len(df) if df is not None else 0
+            
+            # İstatistikleri hesapla
+            haftalik = self.istatistik_hesapla(7, df) if df is not None else None
+            aylik = self.istatistik_hesapla(30, df) if df is not None else None
+            
+            # Rapor oluştur ve gönder
+            rapor = self.rapor_olustur(fiyat, haftalik, aylik, toplam_gun)
             self.email_gonder(rapor)
             
             print("\n" + "="*60)
             print(f"  ✅ İşlem tamamlandı!")
             print(f"  💰 Fiyat: {fiyat:.2f} ₺")
+            print(f"  📊 Toplam {toplam_gun} günlük veri")
             print(f"  📧 Email: Gönderildi")
             print("="*60 + "\n")
             
