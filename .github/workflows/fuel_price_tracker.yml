@@ -37,9 +37,8 @@ jobs:
         EMAIL_RECEIVER: ${{ secrets.EMAIL_RECEIVER_GMAIL }}
         SMTP_SERVER: ${{ secrets.SMTP_SERVER_GMAIL }}
         SMTP_PORT: ${{ secrets.SMTP_PORT_GMAIL }}
-
-      run: |
-        python shell_motorin_github.py
+      run: python shell_motorin_github.py
+      
     - name: CSV Dosyasını Commit'le
       if: success()
       run: |
@@ -56,4 +55,5 @@ jobs:
         name: error-screenshot
         path: hata_screenshot.png
         if-no-files-found: ignore
+
 
