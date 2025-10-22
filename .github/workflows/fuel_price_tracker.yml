@@ -8,19 +8,24 @@ on:
 jobs:
   track-fuel-price:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     
     steps:
-    - uses: actions/checkout@v2
+    - uses: actions/checkout@v4
+      with:
+        fetch-depth: 2
     
     - name: Python Kurulumu
-      uses: actions/setup-python@v2
+      uses: actions/setup-python@v4
       with:
-        python-version: '3.x'
+        python-version: '3.11'
+        cache: 'pip'
     
     - name: Gerekli Paketleri Yükle
       run: |
         python -m pip install --upgrade pip
-        pip install selenium webdriver-manager python-dotenv
+        pip install selenium webdriver-manager python-dotenv pandas
     
     - name: Chrome Kurulumu
       uses: browser-actions/setup-chrome@latest
@@ -33,4 +38,22 @@ jobs:
         SMTP_SERVER: ${{ secrets.SMTP_SERVER_GMAIL }}
         SMTP_PORT: ${{ secrets.SMTP_PORT_GMAIL }}
 
-      run: python shell_motorin_github.py
+      run: |
+        python shell_motorin_github.py
+    - name: CSV Dosyasını Commit'le
+      if: success()
+      run: |
+        git config --global user.name 'GitHub Actions'
+        git config --global user.email 'actions@github.com'
+        git add motorin_fiyatlari.csv
+        git diff --quiet && git diff --staged --quiet || git commit -m "🤖 Günlük fiyat verisi güncellendi ($(date +'%Y-%m-%d'))"
+        git push
+  
+    - name: Hata Durumunda Screenshot Kaydet
+      if: failure()
+      uses: actions/upload-artifact@v3
+      with:
+        name: error-screenshot
+        path: hata_screenshot.png
+        if-no-files-found: ignore
+
