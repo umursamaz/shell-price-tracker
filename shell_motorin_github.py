@@ -317,12 +317,12 @@ class YakitFiyatTakip:
             rapor = self.rapor_olustur(fiyat, haftalik, aylik, toplam_gun)
             self.email_gonder(rapor)
             
-            print("\n" + "="*60)
+            print("\n" + "="*49)
             print(f"  ✅ İşlem tamamlandı!")
             print(f"  💰 Fiyat: {fiyat:.2f} ₺")
             print(f"  📊 Toplam {toplam_gun} günlük veri")
             print(f"  📧 Email: Gönderildi")
-            print("="*60 + "\n")
+            print("="*49 + "\n")
             
             return 0
         except Exception as e:
