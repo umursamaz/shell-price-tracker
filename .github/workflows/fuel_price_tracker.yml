@@ -1,4 +1,4 @@
-name: Shell Fiyat Takip
+name: Shell Motorin Fiyat Takip
 
 on:
   schedule:
@@ -37,7 +37,7 @@ jobs:
         EMAIL_RECEIVER: ${{ secrets.EMAIL_RECEIVER_GMAIL }}
         SMTP_SERVER: ${{ secrets.SMTP_SERVER_GMAIL }}
         SMTP_PORT: ${{ secrets.SMTP_PORT_GMAIL }}
-      run: python shell_motorin_github.py
+      run: python price_tracker.py
       
     - name: CSV Dosyasını Commit'le
       if: success()
