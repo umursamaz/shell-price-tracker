@@ -50,10 +50,11 @@ jobs:
   
     - name: Hata Durumunda Screenshot Kaydet
       if: failure()
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       with:
         name: error-screenshot
         path: hata_screenshot.png
         if-no-files-found: ignore
+
 
 
