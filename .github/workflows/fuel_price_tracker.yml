@@ -1,4 +1,4 @@
-name: Shell Motorin Fiyat Takip
+name: Shell Fiyat Takip
 
 on:
   schedule:
@@ -55,6 +55,7 @@ jobs:
         name: error-screenshot
         path: hata_screenshot.png
         if-no-files-found: ignore
+
 
 
 
