@@ -1,0 +1,9 @@
+# Bu workflow artık kullanılmıyor. Ana workflow: fuel_price_tracker.yml
+name: (Devre Dışı)
+on:
+  workflow_dispatch:
+jobs:
+  placeholder:
+    runs-on: ubuntu-latest
+    steps:
+    - run: echo "Bu workflow devre dışı. Lütfen fuel_price_tracker.yml kullanın."
