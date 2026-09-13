@@ -2,8 +2,25 @@ name: Shell Motorin Fiyat Takip
 
 on:
   schedule:
-    - cron: '0 21 * * *'  # Her gün 21:00 UTC = 00:00 TR
+    # Saatler UTC (TR = UTC+3). Shell günün fiyat listesini ~06:10 TR'de yayınlıyor.
+    # İlk deneme 06:20 TR; liste henüz yoksa veya panele ulaşılamazsa saat başı tekrar denenir.
+    # Gönderim yapıldıktan sonraki denemeler CSV'de bugünün satırını görüp hiçbir şey yapmaz.
+    # :20 seçildi, GitHub saat başındaki zamanlanmış işleri çok geciktiriyor.
+    - cron: '20 3 * * *'   # 06:20 TR
+    - cron: '20 4 * * *'   # 07:20 TR
+    - cron: '20 5 * * *'   # 08:20 TR
+    - cron: '20 6 * * *'   # 09:20 TR, son deneme: Shell'den alınamazsa doviz.com
   workflow_dispatch:
+    inputs:
+      son_deneme:
+        description: "Shell'den alınamazsa doviz.com kullanılsın mı?"
+        type: boolean
+        default: false
+
+# Geciken denemeler üst üste binip aynı gün iki kez mail atmasın
+concurrency:
+  group: fuel-price-tracker
+  cancel-in-progress: false
 
 jobs:
   track-fuel-price:
@@ -13,9 +30,12 @@ jobs:
 
     steps:
     - uses: actions/checkout@v4
+      with:
+        # Tetiklenme anındaki commit yerine en güncel main: önceki denemenin kaydettiği CSV görülsün
+        ref: main
 
     - name: Python Kurulumu
-      uses: actions/setup-python@v4
+      uses: actions/setup-python@v5
       with:
         python-version: '3.11'
         cache: 'pip'
@@ -42,19 +62,20 @@ jobs:
         EMAIL_RECEIVER_ISTANBUL: ${{ secrets.EMAIL_RECEIVER_ISTANBUL }}
         EMAIL_RECEIVER_AKSARAY: ${{ secrets.EMAIL_RECEIVER_AKSARAY }}
         EMAIL_RECEIVER_ANKARA: ${{ secrets.EMAIL_RECEIVER_ANKARA }}
+        SON_DENEME: ${{ github.event.schedule == '20 6 * * *' || inputs.son_deneme == true }}
       run: python price_tracker.py
 
     - name: CSV Dosyasını Commit'le
-      if: success()
+      # Bir lokasyon hata verse de gönderilenler kaydedilsin, sonraki deneme onlara tekrar mail atmasın
+      if: ${{ !cancelled() }}
       run: |
         git config --global user.name 'GitHub Actions'
         git config --global user.email 'actions@github.com'
         git add motorin_fiyatlari.csv
-        git diff --staged --quiet || git commit -m "🤖 Günlük fiyat verileri güncellendi ($(date +'%Y-%m-%d'))"
-        git push
+        git diff --staged --quiet || { git commit -m "🤖 Günlük fiyat verileri güncellendi ($(TZ=Europe/Istanbul date +'%Y-%m-%d'))" && git push; }
 
-    - name: Hata Durumunda Screenshot Kaydet
-      if: failure()
+    - name: Hata Screenshot'larını Kaydet
+      if: ${{ !cancelled() }}
       uses: actions/upload-artifact@v4
       with:
         name: error-screenshots

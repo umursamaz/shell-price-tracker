@@ -2,43 +2,61 @@
 """
 Shell Motorin Fiyat Takip
 Lokasyonlar: İstanbul Anadolu (Tuzla), Aksaray Merkez, Ankara Etimesgut
+
+Fiyatlar Shell'in resmi fiyat panelinden alınır. Panel günün listesini sabah ~06:10 TR'de
+yayınlıyor; liste henüz bugünün değilse veya panele ulaşılamazsa lokasyon bir sonraki
+zamanlanmış denemeye bırakılır. Son denemede (SON_DENEME=true) de alınamazsa fiyat
+doviz.com'dan alınır ve mailde uyarı gösterilir.
 """
 
 from dotenv import load_dotenv
 load_dotenv()
 
-import sys
-from selenium import webdriver
-from selenium.webdriver.common.by import By
-from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
-from selenium.webdriver.chrome.options import Options
-from selenium.webdriver.chrome.service import Service
 import os
-from datetime import datetime, timedelta, timezone
+import re
+import sys
 import smtplib
-import pandas as pd
+import urllib.request
+from datetime import datetime, timedelta, timezone
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
+
+import pandas as pd
+from selenium import webdriver
+from selenium.common.exceptions import NoSuchElementException, StaleElementReferenceException
+from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.chrome.service import Service
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support.ui import Select, WebDriverWait
+
+SHELL_URL = "https://pompafiyat.turkiyeshell.com/prices"
+DOVIZ_URL = "https://www.doviz.com/akaryakit-fiyatlari/{}/shell"
 
 # Sütun sırası ve lokasyon tanımları
 SUTUNLAR = ['tarih', 'istanbul_anadolu', 'aksaray', 'ankara']
 
 LOKASYONLAR = {
     'istanbul_anadolu': {
-        'url_path': 'istanbul-anadolu/tuzla',
         'adi': 'İstanbul Anadolu (Tuzla)',
-        'email_env': 'EMAIL_RECEIVER_ISTANBUL',
+        'shell_il': 'ISTANBUL',
+        'shell_ilce': 'TUZLA',
+        'doviz_path': 'istanbul-anadolu/tuzla',
+        'email_envs': [],  # Fiyatı takip edilmeye devam ediyor, mail gönderilmiyor
     },
     'aksaray': {
-        'url_path': 'aksaray/merkez',
         'adi': 'Aksaray Merkez',
-        'email_env': 'EMAIL_RECEIVER_AKSARAY',
+        'shell_il': 'AKSARAY',
+        'shell_ilce': 'MERKEZ',
+        'doviz_path': 'aksaray/merkez',
+        'email_envs': ['EMAIL_RECEIVER_AKSARAY'],
     },
     'ankara': {
-        'url_path': 'ankara/etimesgut',
         'adi': 'Ankara Etimesgut',
-        'email_env': 'EMAIL_RECEIVER_ANKARA',
+        'shell_il': 'ANKARA',
+        'shell_ilce': 'ETIMESGUT',
+        'doviz_path': 'ankara/etimesgut',
+        # İstanbul alıcısı da Ankara raporunu alıyor
+        'email_envs': ['EMAIL_RECEIVER_ANKARA', 'EMAIL_RECEIVER_ISTANBUL'],
     },
 }
 
@@ -47,6 +65,7 @@ class YakitFiyatTakip:
     def __init__(self):
         self.workspace = os.getenv('GITHUB_WORKSPACE', os.getcwd())
         self.veri_dosyasi = os.path.join(self.workspace, 'motorin_fiyatlari.csv')
+        self.son_deneme = os.getenv('SON_DENEME', 'false').lower() == 'true'
         self.driver = None
 
     # ── Veri ────────────────────────────────────────────────────────────────
@@ -69,18 +88,22 @@ class YakitFiyatTakip:
             print(f"✗ Veri yükleme hatası: {e}")
             return pd.DataFrame(columns=SUTUNLAR)
 
-    def veri_guncelle(self, tarih, lokasyon, fiyat):
-        df = self.verileri_yukle()
+    def verileri_kaydet(self, df):
+        df.to_csv(self.veri_dosyasi, index=False)
+
+    @staticmethod
+    def alinmis_mi(df, tarih, lokasyon):
+        return bool(df.loc[df['tarih'] == tarih, lokasyon].notna().any())
+
+    @staticmethod
+    def fiyat_ekle(df, tarih, lokasyon, fiyat):
+        df = df.copy()
         if tarih in df['tarih'].values:
             df.loc[df['tarih'] == tarih, lokasyon] = fiyat
         else:
-            yeni_satir = {k: None for k in SUTUNLAR}
-            yeni_satir['tarih'] = tarih
-            yeni_satir[lokasyon] = fiyat
-            df = pd.concat([df, pd.DataFrame([yeni_satir])], ignore_index=True)
-        df = df.sort_values('tarih', ascending=True).reset_index(drop=True)
-        df.to_csv(self.veri_dosyasi, index=False)
-        return df
+            # Diğer lokasyon sütunları boş (NaN) kalır
+            df = pd.concat([df, pd.DataFrame([{'tarih': tarih, lokasyon: fiyat}])], ignore_index=True)[SUTUNLAR]
+        return df.sort_values('tarih', ascending=True).reset_index(drop=True)
 
     # ── Selenium ─────────────────────────────────────────────────────────────
 
@@ -91,10 +114,6 @@ class YakitFiyatTakip:
         options.add_argument('--disable-dev-shm-usage')
         options.add_argument('--disable-gpu')
         options.add_argument('--window-size=1920,1080')
-        options.add_argument(
-            'user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
-            'AppleWebKit/537.36 (KHTML, like Gecko) Chrome/117.0.0.0 Safari/537.36'
-        )
         self.driver = webdriver.Chrome(service=Service(), options=options)
         print("✓ WebDriver başlatıldı")
 
@@ -103,22 +122,78 @@ class YakitFiyatTakip:
             self.driver.quit()
             self.driver = None
 
-    def fiyat_cek(self, lokasyon_key):
-        url = f"https://www.doviz.com/akaryakit-fiyatlari/{LOKASYONLAR[lokasyon_key]['url_path']}/shell"
-        print(f"→ {LOKASYONLAR[lokasyon_key]['adi']} fiyatı çekiliyor...")
-        self.driver.get(url)
-        wait = WebDriverWait(self.driver, 30)
-        fiyat_elements = wait.until(
-            EC.presence_of_all_elements_located(
-                (By.CSS_SELECTOR, "td.text-bold.p-12.text-center")
-            )
-        )
-        if len(fiyat_elements) < 2:
-            raise Exception("Motorin fiyat elementi bulunamadı")
-        motorin_str = fiyat_elements[1].text.strip()
-        fiyat = float(motorin_str.replace('₺', '').replace(',', '.'))
-        print(f"✓ {LOKASYONLAR[lokasyon_key]['adi']}: {fiyat:.2f} ₺")
-        return fiyat
+    def screenshot_kaydet(self, ad):
+        try:
+            path = os.path.join(self.workspace, f"hata_screenshot_{ad}.png")
+            self.driver.save_screenshot(path)
+            print(f"→ Screenshot kaydedildi: {path}")
+        except Exception:
+            pass
+
+    # ── Kaynaklar ────────────────────────────────────────────────────────────
+
+    def _shell_motorin(self, il, ilce):
+        """Tablo seçili il/ilçeyi gösteriyorsa motorin fiyatını, henüz göstermiyorsa None döner."""
+        basliklar, satirlar = self.driver.execute_script("""
+            const th = [...document.querySelectorAll('table th')].map(e => e.innerText.trim());
+            const rows = [...document.querySelectorAll('table tbody tr')]
+                .map(tr => [...tr.querySelectorAll('td')].map(td => td.innerText.trim()));
+            return [th, rows];""")
+        # Shell zaman zaman iki motorin ürünü listeliyor (ör. Fuelsave Diesel + V-Power Diesel);
+        # ürünü olmayan dönemde hücre boş ya da "-" oluyor, ilk sayısal motorin hücresi alınır
+        motorin_idx = [i for i, b in enumerate(basliklar) if b.startswith('Motorin')]
+        if not motorin_idx or not any(h and h[0] == il for h in satirlar):
+            return None
+        for hucreler in satirlar:
+            if hucreler and hucreler[0] == ilce and len(hucreler) == len(basliklar):
+                degerler = [hucreler[i] for i in motorin_idx if re.fullmatch(r'[\d.]+,\d+', hucreler[i])]
+                if degerler:
+                    return float(degerler[0].replace('.', '').replace(',', '.'))
+        return None
+
+    def shell_fiyatlari_cek(self, lokasyon_keys, bugun):
+        """
+        Shell'in resmi panelinden fiyatları okur. (liste_tarihi, {lokasyon: fiyat}) döner.
+        Panelin gösterdiği liste bugünün değilse fiyat okunmaz. Panele ulaşılamazsa exception fırlatır.
+        """
+        print("→ Shell fiyat paneli açılıyor...")
+        self.driver.get(SHELL_URL)
+        wait = WebDriverWait(self.driver, 60,
+                             ignored_exceptions=(NoSuchElementException, StaleElementReferenceException))
+        # "12.09.2026 Tarihinde Geçerli ..." başlığı tablodan sonra yükleniyor, görünene kadar bekle
+        eslesme = wait.until(lambda d: re.search(
+            r'(\d{2})\.(\d{2})\.(\d{4}) Tarihinde Geçerli', d.find_element(By.TAG_NAME, 'body').text))
+        liste_tarihi = f"{eslesme.group(3)}-{eslesme.group(2)}-{eslesme.group(1)}"
+        print(f"✓ Shell listesi: {liste_tarihi} tarihinde geçerli")
+        if liste_tarihi != bugun:
+            return liste_tarihi, {}
+
+        fiyatlar = {}
+        for key in lokasyon_keys:
+            il, ilce = LOKASYONLAR[key]['shell_il'], LOKASYONLAR[key]['shell_ilce']
+            try:
+                wait.until(lambda d: Select(d.find_element(By.ID, 'city-select')).select_by_visible_text(il) or True)
+                wait.until(lambda d: ilce in d.execute_script(
+                    "return [...document.querySelectorAll('#county-select option')].map(o => o.text)"))
+                wait.until(lambda d: Select(d.find_element(By.ID, 'county-select')).select_by_visible_text(ilce) or True)
+                fiyatlar[key] = wait.until(lambda d: self._shell_motorin(il, ilce))
+                print(f"✓ {LOKASYONLAR[key]['adi']}: {fiyatlar[key]:.2f} ₺ (Shell)")
+            except Exception as e:
+                print(f"✗ Shell'den okunamadı ({LOKASYONLAR[key]['adi']}): {type(e).__name__}: {str(e).strip()[:200]}")
+                self.screenshot_kaydet(f"shell_{key}")
+        return liste_tarihi, fiyatlar
+
+    def doviz_fiyati_cek(self, lokasyon_key):
+        """Yedek kaynak. (fiyat, doviz.com'un veri tarihi) döner."""
+        url = DOVIZ_URL.format(LOKASYONLAR[lokasyon_key]['doviz_path'])
+        istek = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+        html = urllib.request.urlopen(istek, timeout=30).read().decode('utf-8')
+        hucreler = re.findall(r'<td class="text-bold p-12 text-center">\s*([^<]+?)\s*</td>', html)
+        veri_tarihi = re.search(r'<td class="time p-12 text-center">\s*([^<]+?)\s*</td>', html)
+        if len(hucreler) < 2:
+            raise Exception("doviz.com'da motorin fiyat elementi bulunamadı")
+        fiyat = float(hucreler[1].replace('₺', '').replace('.', '').replace(',', '.'))
+        return fiyat, (veri_tarihi.group(1) if veri_tarihi else '?')
 
     # ── Rapor ────────────────────────────────────────────────────────────────
 
@@ -137,7 +212,7 @@ class YakitFiyatTakip:
             'bitis_tarih': son.iloc[-1]['tarih'],
         }
 
-    def rapor_olustur(self, lokasyon_key, guncel_fiyat, df, tr_time):
+    def rapor_olustur(self, lokasyon_key, guncel_fiyat, df, tr_time, yedek_notu=None):
         lokasyon_adi = LOKASYONLAR[lokasyon_key]['adi']
         haftalik = self.istatistik_hesapla(df, lokasyon_key, 7)
         aylik = self.istatistik_hesapla(df, lokasyon_key, 30)
@@ -152,6 +227,12 @@ class YakitFiyatTakip:
             }
         if aylik is None:
             aylik = haftalik.copy()
+
+        kaynak = "doviz.com (yedek kaynak)" if yedek_notu else "Shell resmi fiyat paneli"
+        uyari = f"""
+                <div style="background-color: #fff3cd; border-left: 4px solid #f0ad4e; padding: 12px 15px; border-radius: 4px; margin-bottom: 20px; color: #856404;">
+                    ⚠️ {yedek_notu}
+                </div>""" if yedek_notu else ""
 
         def ozet_tablo(istat, etiket, guncel):
             yuzde = 'haftalık' if etiket == 'haftalık' else 'aylık'
@@ -192,16 +273,18 @@ class YakitFiyatTakip:
                 <p style="margin: 10px 0 0 0;">{lokasyon_adi} — {tr_time.strftime('%d.%m.%Y %H:%M:%S')}</p>
             </div>
             <div style="padding: 20px;">
+                {uyari}
                 <h2 style="color: #333;">Güncel Fiyat</h2>
-                <div style="font-size: 48px; font-weight: bold; color: #DD1D21; margin: 20px 0;">
+                <div style="font-size: 48px; font-weight: bold; color: #DD1D21; margin: 20px 0 5px 0;">
                     {guncel_fiyat:.2f} ₺/Lt
                 </div>
+                <p style="margin: 0; color: #666; font-size: 13px;">Kaynak: {kaynak}</p>
                 {ozet_tablo(haftalik, 'haftalık', guncel_fiyat)}
                 {ozet_tablo(aylik, 'aylık', guncel_fiyat)}
                 <div style="margin-top: 40px; padding: 15px; background-color: #f9f9f9; border-left: 4px solid #DD1D21; border-radius: 4px;">
                     <p style="margin: 0; color: #666; font-size: 13px;">
                         📅 <strong>{toplam_gun}</strong> gündür takip ediliyor<br>
-                        🤖 GitHub Actions — Her gün 00:00 TR saatinde güncellenir.
+                        🤖 GitHub Actions — Her sabah Shell günün fiyat listesini yayınlayınca (~06:30 TR) güncellenir.
                     </p>
                 </div>
             </div>
@@ -211,7 +294,7 @@ class YakitFiyatTakip:
 
     # ── Email ────────────────────────────────────────────────────────────────
 
-    def email_gonder(self, icerik, alici, tr_time):
+    def email_gonder(self, icerik, alici, tr_time, lokasyon_adi, yedek=False):
         email_gonderen = os.getenv('EMAIL_SENDER')
         email_sifre = os.getenv('SMTP_KEY')
         smtp_server = os.getenv('SMTP_SERVER', 'smtp.gmail.com')
@@ -221,7 +304,8 @@ class YakitFiyatTakip:
             raise ValueError("Email bilgileri eksik (EMAIL_SENDER, SMTP_KEY veya alıcı tanımlı değil)")
 
         msg = MIMEMultipart('alternative')
-        msg['Subject'] = f"🔔 Shell Motorin Fiyatı — {tr_time.strftime('%d.%m.%Y %H:%M:%S')}"
+        msg['Subject'] = (f"{'⚠️' if yedek else '🔔'} Shell Motorin Fiyatı — {lokasyon_adi} — "
+                          f"{tr_time.strftime('%d.%m.%Y')}")
         msg['From'] = email_gonderen
         msg['To'] = alici
         msg.attach(MIMEText(icerik, 'html', 'utf-8'))
@@ -238,7 +322,7 @@ class YakitFiyatTakip:
             except Exception:
                 pass
 
-    # ── Ana Döngü ────────────────────────────────────────────────────────────
+    # ── Ana Akış ─────────────────────────────────────────────────────────────
 
     def calistir(self):
         print("\n" + "=" * 42)
@@ -247,41 +331,88 @@ class YakitFiyatTakip:
 
         tr_time = datetime.now(timezone.utc) + timedelta(hours=3)
         bugun = tr_time.strftime('%Y-%m-%d')
-        hatalar = []
+        df = self.verileri_yukle()
 
+        # CSV'de bugünün fiyatı olan lokasyonlar önceki denemede gönderilmiştir
+        bekleyenler = [k for k in LOKASYONLAR if not self.alinmis_mi(df, bugun, k)]
+        if not bekleyenler:
+            print(f"✓ {bugun} fiyatları zaten alınıp gönderilmiş, yapılacak bir şey yok")
+            return 0
+        print(f"Tarih: {bugun} | Son deneme: {'evet' if self.son_deneme else 'hayır'}")
+        print(f"Bekleyen lokasyonlar: {', '.join(LOKASYONLAR[k]['adi'] for k in bekleyenler)}\n")
+
+        # 1) Shell resmi paneli
+        fiyatlar = {}
         try:
             self.setup_driver()
-
-            for lokasyon_key, lokasyon_info in LOKASYONLAR.items():
-                print(f"\n── {lokasyon_info['adi']} ──")
-                try:
-                    fiyat = self.fiyat_cek(lokasyon_key)
-                    df = self.veri_guncelle(bugun, lokasyon_key, fiyat)
-
-                    alici = os.getenv(lokasyon_info['email_env'])
-                    if alici:
-                        rapor = self.rapor_olustur(lokasyon_key, fiyat, df, tr_time)
-                        self.email_gonder(rapor, alici, tr_time)
-                    else:
-                        print(f"⚠ Alıcı tanımlı değil ({lokasyon_info['email_env']}), email atlandı")
-
-                except Exception as e:
-                    print(f"✗ Hata: {e}")
-                    try:
-                        path = os.path.join(self.workspace, f"hata_screenshot_{lokasyon_key}.png")
-                        self.driver.save_screenshot(path)
-                        print(f"→ Screenshot kaydedildi: {path}")
-                    except Exception:
-                        pass
-                    hatalar.append(lokasyon_info['adi'])
+            liste_tarihi, fiyatlar = self.shell_fiyatlari_cek(bekleyenler, bugun)
+            if liste_tarihi != bugun:
+                print(f"⚠ Shell'in bugünkü listesi henüz yayınlanmamış (panelde {liste_tarihi} listesi var)")
+        except Exception as e:
+            # Selenium mesajları stacktrace içeriyor, ilk satır yeterli
+            ilk_satir = str(e).strip().splitlines()[0] if str(e).strip() else ''
+            print(f"✗ Shell paneline ulaşılamadı: {type(e).__name__}: {ilk_satir}")
+            self.screenshot_kaydet("shell")
         finally:
             self.close_driver()
+
+        # 2) Son denemede Shell'den alınamayanlar için doviz.com
+        yedek_notlari = {}
+        eksikler = [k for k in bekleyenler if k not in fiyatlar]
+        if eksikler and not self.son_deneme:
+            print(f"\n→ {len(eksikler)} lokasyon sonraki denemeye bırakıldı")
+        elif eksikler:
+            print("\n── Son deneme: doviz.com yedek kaynağı ──")
+            for k in eksikler:
+                try:
+                    fiyat, veri_tarihi = self.doviz_fiyati_cek(k)
+                    fiyatlar[k] = fiyat
+                    yedek_notlari[k] = (
+                        "Shell'in resmi fiyat paneline ulaşılamadı veya bugünkü liste yayınlanmadı. "
+                        f"Bu fiyat doviz.com'dan alındı (doviz.com veri tarihi: {veri_tarihi}) ve güncel olmayabilir."
+                    )
+                    print(f"✓ {LOKASYONLAR[k]['adi']}: {fiyat:.2f} ₺ (doviz.com, veri tarihi {veri_tarihi})")
+                except Exception as e:
+                    print(f"✗ doviz.com'dan da alınamadı ({LOKASYONLAR[k]['adi']}): {e}")
+
+        # 3) Rapor, mail ve kayıt
+        hatalar = []
+        for k in bekleyenler:
+            adi = LOKASYONLAR[k]['adi']
+            if k not in fiyatlar:
+                if self.son_deneme:
+                    hatalar.append(adi)
+                continue
+
+            print(f"\n── {adi} ──")
+            yeni_df = self.fiyat_ekle(df, bugun, k, fiyatlar[k])
+            envs = LOKASYONLAR[k]['email_envs']
+            alicilar = [os.getenv(e) for e in envs if os.getenv(e)]
+            try:
+                if alicilar:
+                    rapor = self.rapor_olustur(k, fiyatlar[k], yeni_df, tr_time, yedek_notlari.get(k))
+                    for alici in alicilar:
+                        self.email_gonder(rapor, alici, tr_time, adi, yedek=k in yedek_notlari)
+                elif envs:
+                    print(f"⚠ Alıcı tanımlı değil ({', '.join(envs)}), email atlandı")
+                else:
+                    print("→ Bu lokasyon için mail gönderilmiyor")
+                basarili = True
+            except Exception as e:
+                print(f"✗ Email gönderilemedi: {e}")
+                hatalar.append(adi)
+                basarili = False
+
+            # Mail gidemezse sonraki deneme tekrar denesin diye kaydetme; son denemede fiyatı yine de kaydet
+            if basarili or self.son_deneme:
+                df = yeni_df
+                self.verileri_kaydet(df)
 
         print("\n" + "=" * 42)
         if hatalar:
             print(f"  ⚠ Hatalı lokasyonlar: {', '.join(hatalar)}")
             return 1
-        print("  ✅ Tüm lokasyonlar başarıyla tamamlandı")
+        print("  ✅ Tamamlandı")
         return 0
 
 
